@@ -165,6 +165,53 @@ public class FunctionalTest {
         assertContains(VOD_SNAPSHOT_2);
     }
 
+
+    @Test
+    public void shouldReturnOnlyOneItemIfPolled() {
+        addKeyAndValue(VOD_SNAPSHOT_1);
+        assertPollContains(VOD_SNAPSHOT_1);
+
+        addKeyAndValue(VOD_SNAPSHOT_2);
+        assertPollContains(VOD_SNAPSHOT_2);
+    }
+
+    @Test
+    public void shouldReturnOnlyOneLatestItemIfPolled() {
+        addKeyAndValue(VOD_SNAPSHOT_1);
+        addKeyAndValue(VOD_SNAPSHOT_2);
+        assertPollContains(VOD_SNAPSHOT_2);
+    }
+
+    @Test
+    public void shouldReturnOnlyOneLatestItemInOrderIfPolled() {
+        addKeyAndValue(VOD_SNAPSHOT_1);
+        addKeyAndValue(BP_SNAPSHOT);
+        addKeyAndValue(VOD_SNAPSHOT_2);
+        assertPollContains(VOD_SNAPSHOT_2);
+        addKeyAndValue(VOD_SNAPSHOT_1);
+        assertPollContains(BP_SNAPSHOT);
+        assertContains(VOD_SNAPSHOT_1);
+    }
+
+    @Test
+    public void shouldReturnLatestValueWhenUsedWithPollMultiple() {
+        addValue(BP_SNAPSHOT);
+        addValue(VOD_SNAPSHOT_1);
+        addValue(VOD_SNAPSHOT_2);
+
+        List<MarketSnapshot> snapshots = new ArrayList<MarketSnapshot>();
+        assertEquals(2, buffer.poll(snapshots, 2));
+        assertEquals(2, snapshots.size());
+        assertSame(BP_SNAPSHOT, snapshots.get(0));
+        assertSame(VOD_SNAPSHOT_1, snapshots.get(1));
+
+        snapshots.clear();
+        assertSame(VOD_SNAPSHOT_2, buffer.poll());
+        assertIsEmpty();
+    }
+
+
+
     @Test
     public void shouldReturnOnlyTheMaximumNumberOfRequestedItems() {
         addValue(BP_SNAPSHOT);
@@ -240,6 +287,10 @@ public class FunctionalTest {
         assertTrue(buffer.offer(snapshot));
     }
 
+    private void assertPollContains(MarketSnapshot expected) {
+        MarketSnapshot actual = buffer.poll();
+        assertSame(expected, actual);
+    }
     private void assertContains(MarketSnapshot... expected) {
         List<MarketSnapshot> actualSnapshots = new ArrayList<MarketSnapshot>(expected.length);
 

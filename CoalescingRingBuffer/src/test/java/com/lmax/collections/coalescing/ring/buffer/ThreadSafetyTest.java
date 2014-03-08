@@ -96,11 +96,37 @@ public class ThreadSafetyTest {
         private void fill(ArrayList<MarketSnapshot> bucket) {
             if (useLimitedRead) {
                 snapshotBuffer.poll(bucket, 1);
-            }
-            else {
+            } else {
                 snapshotBuffer.poll(bucket);
             }
             useLimitedRead = !useLimitedRead;
+        }
+    }
+
+
+    private static class PollingConsumer extends Thread {
+        private final MarketSnapshot[] snapshots = new MarketSnapshot[NUMBER_OF_INSTRUMENTS];
+        private final CoalescingBuffer<Long, MarketSnapshot> snapshotBuffer;
+        private boolean useLimitedRead;
+
+        private PollingConsumer(CoalescingBuffer<Long, MarketSnapshot> snapshotBuffer) {
+            super("consumer");
+            this.snapshotBuffer = snapshotBuffer;
+        }
+
+        @Override
+        public void run() {
+            while (true) {
+                MarketSnapshot snapshot = snapshotBuffer.poll();
+                if (snapshot.getInstrumentId() == POISON_PILL) {
+                    return;
+                }
+                snapshots[indexOf(snapshot)] = snapshot;
+            }
+        }
+
+        private int indexOf(MarketSnapshot snapshot) {
+            return (int) snapshot.getInstrumentId();
         }
     }
 
@@ -110,11 +136,12 @@ public class ThreadSafetyTest {
 
         Producer producer = new Producer(buffer);
         Consumer consumer = new Consumer(buffer);
-
+        long start = System.nanoTime();
         producer.start();
         consumer.start();
 
         consumer.join();
+        long end = System.nanoTime();
 
         for (int instrument = 0; instrument < NUMBER_OF_INSTRUMENTS; instrument++) {
             MarketSnapshot snapshot = consumer.snapshots[instrument];
@@ -122,6 +149,30 @@ public class ThreadSafetyTest {
             assertEquals("bid for instrument " + instrument + ":", SECOND_BID, snapshot.getBid());
             assertEquals("ask for instrument " + instrument + ":", SECOND_ASK, snapshot.getAsk());
         }
+        System.out.println("Total time:" + (end - start));
+    }
+
+    @Test
+    public void shouldSeeLastPricesWhenPolling() throws InterruptedException {
+        CoalescingBuffer<Long, MarketSnapshot> buffer = new CoalescingRingBuffer<Long, MarketSnapshot>(1 << 20);
+
+        Producer producer = new Producer(buffer);
+        PollingConsumer consumer = new PollingConsumer(buffer);
+        long start = System.nanoTime();
+        producer.start();
+        consumer.start();
+
+        consumer.join();
+        long end = System.nanoTime();
+
+        for (int instrument = 0; instrument < NUMBER_OF_INSTRUMENTS; instrument++) {
+            MarketSnapshot snapshot = consumer.snapshots[instrument];
+
+            assertEquals("bid for instrument " + instrument + ":", SECOND_BID, snapshot.getBid());
+            assertEquals("ask for instrument " + instrument + ":", SECOND_ASK, snapshot.getAsk());
+        }
+        System.out.println("Total time:" + (end - start));
+
     }
 
 }

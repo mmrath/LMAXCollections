@@ -66,4 +66,8 @@ public final class EmptyCoalescingBuffer<K, V> implements CoalescingBuffer<K, V>
         return 0;
     }
 
+    @Override
+    public V poll() {
+        return null;
+    }
 }

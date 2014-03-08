@@ -17,6 +17,9 @@ package com.lmax.collections.coalescing.ring.buffer;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static java.lang.Math.min;
 
@@ -33,6 +36,9 @@ public final class CoalescingRingBuffer<K, V> implements CoalescingBuffer<K, V> 
     private final int mask;
     private final int capacity;
 
+    final Lock lock = new ReentrantLock();
+    final Condition hasObjectsCondition = lock.newCondition();
+
     private volatile long firstWrite = 1; // the oldest slot that is is safe to write to
     private final AtomicLong lastRead = new AtomicLong(0); // the newest slot that it is safe to overwrite
 
@@ -40,7 +46,6 @@ public final class CoalescingRingBuffer<K, V> implements CoalescingBuffer<K, V> 
     public CoalescingRingBuffer(int capacity) {
         this.capacity = nextPowerOfTwo(capacity);
         this.mask = this.capacity - 1;
-
 
         this.keys = (K[]) new Object[this.capacity];
         this.values = new AtomicReferenceArray<V>(this.capacity);
@@ -88,10 +93,8 @@ public final class CoalescingRingBuffer<K, V> implements CoalescingBuffer<K, V> 
 
         for (long updatePosition = firstWrite; updatePosition < nextWrite; updatePosition++) {
             int index = mask(updatePosition);
-
-            if(key.equals(keys[index])) {
+            if (key.equals(keys[index])) {
                 values.set(index, value);
-
                 if (updatePosition >= firstWrite) {  // check that the reader has not read beyond our update point yet
                     return true;
                 } else {
@@ -125,7 +128,6 @@ public final class CoalescingRingBuffer<K, V> implements CoalescingBuffer<K, V> 
         if (lastRead == lastCleaned) {
             return;
         }
-
         while (lastCleaned < lastRead) {
             int index = mask(++lastCleaned);
             keys[index] = null;
@@ -139,8 +141,13 @@ public final class CoalescingRingBuffer<K, V> implements CoalescingBuffer<K, V> 
 
         keys[index] = key;
         values.set(index, value);
-
         this.nextWrite = nextWrite + 1;
+        lock.lock();
+        try {
+            hasObjectsCondition.signal();
+        } finally {
+            lock.unlock();
+        }
     }
 
     @Override
@@ -152,6 +159,31 @@ public final class CoalescingRingBuffer<K, V> implements CoalescingBuffer<K, V> 
     public int poll(Collection<? super V> bucket, int maxItems) {
         long claimUpTo = min(firstWrite + maxItems, nextWrite);
         return fill(bucket, claimUpTo);
+    }
+
+    @Override
+    public V poll() {
+        long claimUpTo = min(firstWrite + 1, nextWrite);
+        firstWrite = claimUpTo;
+        long lastRead = this.lastRead.get();
+        long readIndex = lastRead + 1;
+        V returnVal = null;
+        if (readIndex < claimUpTo) {
+            int index = mask(readIndex);
+            returnVal = values.get(index);
+        } else {
+            lock.lock();
+            try {
+                hasObjectsCondition.await();
+                return poll();
+            } catch (InterruptedException e) {
+
+            } finally {
+                lock.unlock();
+            }
+        }
+        this.lastRead.lazySet(claimUpTo - 1);
+        return returnVal;
     }
 
     private int fill(Collection<? super V> bucket, long claimUpTo) {

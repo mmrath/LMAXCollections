@@ -62,4 +62,9 @@ public interface CoalescingBuffer<K, V> {
      */
     int poll(Collection<? super V> bucket, int maxItems);
 
+
+    /**
+     * @return the next item
+     */
+     V poll();
 }
