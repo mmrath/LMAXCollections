@@ -154,7 +154,7 @@ public class ThreadSafetyTest {
 
     @Test
     public void shouldSeeLastPricesWhenPolling() throws InterruptedException {
-        CoalescingBuffer<Long, MarketSnapshot> buffer = new CoalescingRingBuffer<Long, MarketSnapshot>(1 << 20);
+        CoalescingBuffer<Long, MarketSnapshot> buffer = new CoalescingRingBuffer<Long, MarketSnapshot>(1 << 20, true);
 
         Producer producer = new Producer(buffer);
         PollingConsumer consumer = new PollingConsumer(buffer);

@@ -36,19 +36,25 @@ public final class CoalescingRingBuffer<K, V> implements CoalescingBuffer<K, V> 
     private final int mask;
     private final int capacity;
 
-    final Lock lock = new ReentrantLock();
-    final Condition hasObjectsCondition = lock.newCondition();
+    private final boolean blockedPolling;
+    private final Lock lock = new ReentrantLock();
+    private final Condition hasObjectsCondition = lock.newCondition();
 
     private volatile long firstWrite = 1; // the oldest slot that is is safe to write to
     private final AtomicLong lastRead = new AtomicLong(0); // the newest slot that it is safe to overwrite
 
     @SuppressWarnings("unchecked")
-    public CoalescingRingBuffer(int capacity) {
+    public CoalescingRingBuffer(int capacity, boolean blockedPolling) {
+        this.blockedPolling = blockedPolling;
         this.capacity = nextPowerOfTwo(capacity);
         this.mask = this.capacity - 1;
 
         this.keys = (K[]) new Object[this.capacity];
         this.values = new AtomicReferenceArray<V>(this.capacity);
+    }
+
+    public CoalescingRingBuffer(int capacity) {
+        this(capacity, false);
     }
 
     private int nextPowerOfTwo(int value) {
@@ -142,11 +148,13 @@ public final class CoalescingRingBuffer<K, V> implements CoalescingBuffer<K, V> 
         keys[index] = key;
         values.set(index, value);
         this.nextWrite = nextWrite + 1;
-        lock.lock();
-        try {
-            hasObjectsCondition.signal();
-        } finally {
-            lock.unlock();
+        if (blockedPolling) {
+            lock.lock();
+            try {
+                hasObjectsCondition.signal();
+            } finally {
+                lock.unlock();
+            }
         }
     }
 
@@ -172,14 +180,16 @@ public final class CoalescingRingBuffer<K, V> implements CoalescingBuffer<K, V> 
             int index = mask(readIndex);
             returnVal = values.get(index);
         } else {
-            lock.lock();
-            try {
-                hasObjectsCondition.await();
-                return poll();
-            } catch (InterruptedException e) {
+            if (blockedPolling) {
+                lock.lock();
+                try {
+                    hasObjectsCondition.await();
+                    return poll();
+                } catch (InterruptedException e) {
 
-            } finally {
-                lock.unlock();
+                } finally {
+                    lock.unlock();
+                }
             }
         }
         this.lastRead.lazySet(claimUpTo - 1);
